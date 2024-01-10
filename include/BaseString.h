@@ -8,11 +8,19 @@
 
 namespace Strazzle {
 
-// OK        => everything ok
-// ALLOC_ERR => something went wrong when allocating
-// IGNORED   => no action was performed, probaply because the action didnt make any sense
-//              for example when I call Shrink(10) but the length before was 5
+/**
+ * OK        => everything ok
+ * ALLOC_ERR => something went wrong when allocating
+ * IGNORED   => no action was performed, probaply because the action didnt make any sense
+ *              for example when I call Shrink(10) but the length before was 5
+ */
 enum class StringAllocError { OK, ALLOC_ERR, IGNORED };
+
+/**
+ * OK        => everything ok
+ * ALLOC_ERR => something went wrong when allocating
+ *
+ */
 enum class BaseStringError { OK, ALLOC_ERR };
 
 /**
@@ -42,7 +50,6 @@ template<typename CharT, std::size_t TSize = sizeof(CharT)> class BaseString;
 template<typename CharT, std::size_t TSize = sizeof(CharT)> class StringAllocator;
 template<typename CharT, std::size_t TSize = sizeof(CharT)> struct BaseStringReference;
 
-// TODO Fix access specifiers
 /**
  * @brief BaseString class template for managing strings with dynamic memory allocation.
  *        Provides functions for string manipulation, resizing, and reference creation.
@@ -55,6 +62,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
     friend class BaseStringReference<CharT>;
 
   public:
+    // TODO Move to private (is here for debug purposes)
     StringAllocator<CharT> alloc;
 
     /**
@@ -261,7 +269,6 @@ template<typename CharT, std::size_t TSize> class BaseString {
      * @param i The starting index of the substring.
      * @param len The length of the substring.
      * @return A new BaseString object representing the specified substring.
-     * @warning NOT IMPLEMENTED
      */
     BaseString Substr(std::size_t i, std::size_t size = SIZE_MAX) {
         CheckBounds(i, "BaseString::Substr");
@@ -296,7 +303,6 @@ template<typename CharT, std::size_t TSize> class BaseString {
     }
 };
 
-// TODO Fix access specifiers
 /**
  * @brief BaseStringReference struct template for creating references to portions of a BaseString.
  *        Provides access to the referenced characters and length of the reference.
@@ -308,6 +314,7 @@ template<typename CharT, std::size_t TSize> struct BaseStringReference {
     friend class StringAllocator<CharT>;
     friend class BaseString<CharT>;
 
+  public:
     /**
      * @brief Destructor for BaseStringReference.
      */
@@ -375,7 +382,6 @@ template<typename CharT, std::size_t TSize> struct BaseStringReference {
     BaseString<CharT>& base;
 };
 
-// TODO Fix access specifiers
 /**
  * @brief StringAllocator class template for managing dynamic memory allocation for strings.
  *        The class provides functions for resizing, shrinking, and reallocating memory.
