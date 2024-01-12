@@ -23,29 +23,6 @@ enum class StringAllocError { OK, ALLOC_ERR, IGNORED };
  */
 enum class BaseStringError { OK, ALLOC_ERR };
 
-/**
- * @brief Counts leading zeros in an unsigned 64-bit integer.
- *
- * @param x The input unsigned 64-bit integer.
- * @return The number of leading zeros in the binary representation of x.
- */
-std::size_t clz(std::size_t x) {
-    return x ? __builtin_clzl(x) : 64;
-}
-
-/**
- * @brief Calculates the scaling function for dynamic memory allocation.
- *
- * The scaling function is used to determine the appropriate size for memory allocation,
- * based on the provided size parameter.
- *
- * @param size The desired size for memory allocation.
- * @return The calculated size using the scaling function.
- */
-std::size_t ScalingFunction(std::size_t size) {
-    return 1 << (64 - clz(size + 1));
-}
-
 template<typename CharT, std::size_t TSize = sizeof(CharT)> class BaseString;
 template<typename CharT, std::size_t TSize = sizeof(CharT)> class StringAllocator;
 template<typename CharT, std::size_t TSize = sizeof(CharT)> struct BaseStringReference;
@@ -62,13 +39,13 @@ template<typename CharT, std::size_t TSize> class BaseString {
     friend class BaseStringReference<CharT>;
 
   public:
-    // TODO Move to private (is here for debug purposes)
-    StringAllocator<CharT> alloc;
-
     /**
      * @brief Default constructor for BaseString.
      */
-    BaseString() = default;
+    BaseString() {
+        alloc.ReallocToExp(0);
+        alloc.c[0] = 0;
+    };
 
     /**
      * @brief Constructor that initializes the string with the provided content and size.
@@ -81,11 +58,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
         size = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERR_CHECKING
-        if(alloc.Resize(size) == StringAllocError::ALLOC_ERR) {
+        if(alloc.DynamicResize(size + 1) == StringAllocError::ALLOC_ERR) {
             throw std::bad_alloc();
         }
 #else
-        alloc.Resize(size);
+        alloc.DynamicResize(size + 1);
 #endif
 
         memcpy(alloc.c, str, TSize * size);
@@ -129,11 +106,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
         uint64_t append_size = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.Resize(l + append_size) == StringAllocError::ALLOC_ERR) {
+        if(alloc.DynamicResize(l + append_size + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.Resize(append_size + l);
+        alloc.DynamicResize(append_size + l + 1);
 #endif
 
         memcpy(alloc.c + l, str, TSize * append_size);
@@ -157,11 +134,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
         uint64_t insert_len = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.Resize(l + insert_len) == StringAllocError::ALLOC_ERR) {
+        if(alloc.DynamicResize(l + insert_len + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.Resize(new_len);
+        alloc.DynamicResize(l + insert_len + 1);
 #endif
 
         memmove(alloc.c + i + str_len, alloc.c + i, TSize * (l - i));
@@ -191,11 +168,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
         alloc.c[l] = 0;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.Resize(l) == StringAllocError::ALLOC_ERR) {
+        if(alloc.DynamicResize(l + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.Resize(l);
+        alloc.DynamicResize(l + 1);
 #endif
     }
 
@@ -209,11 +186,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
      */
     BaseStringError Resize(std::size_t size, const CharT* fill = " ") {
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.Resize(size) == StringAllocError::ALLOC_ERR) {
+        if(alloc.DynamicResize(size + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.Resize(size);
+        alloc.DynamicResize(size + 1);
 #endif
         if(size > l) {
             if(fill == "") fill = " ";
@@ -288,6 +265,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
     }
 
   private:
+    StringAllocator<CharT> alloc;
     uint64_t l;
 
     /**
@@ -401,41 +379,52 @@ template<typename CharT, std::size_t TSize> class StringAllocator {
      *        Releases the allocated memory using 'delete'.
      */
     ~StringAllocator() {
-        delete[] c;
+        Free();
     }
 
     /**
-     * @brief Resizes the allocated memory for the string.
+     * @brief Dynamically resizes the allocated memory for the string.
      *        If the requested size is less than the current size, it invokes Shrink.
      *        Otherwise, it invokes Realloc.
      *
      * @param size The new size to resize the memory to.
-     * @return StringAllocError::OK if the operation is successful, StringAllocError::ALLOC_ERR if memory allocation fails.
+     * @return StringAllocError::OK if the operation is successful,
+     *         StringAllocError::ALLOC_ERR if memory allocation fails.
+     *         StringAllocError::IGNORED if the requested size already was the current size
      */
-    StringAllocError Resize(std::size_t size) {
-        if(size < l) {
+    StringAllocError DynamicResize(std::size_t size) {
+        uint64_t current_size = (1 << size_exp);
+
+        if(size < current_size) {
             return Shrink(size);
-        } else {
+        } else if(size > current_size) {
             return Realloc(size);
+        } else {
+            return StringAllocError::IGNORED;
         }
     }
 
     /**
      * @brief Shrinks the allocated memory for the string.
      *        If the requested size is greater than or equal to the current size, it returns StringAllocError::IGNORED.
-     *        Otherwise, it calculates the new size using ScalingFunction and updates the allocator's size.
+     *        Otherwise, it calculates the new size using NextExponent and updates the allocator's size.
      *
      * @param size The new size to shrink the memory to.
-     * @return StringAllocError::OK if the operation is successful, StringAllocError::IGNORED if the requested size is not smaller than the current
-     * size.
+     * @return StringAllocError::OK if the operation is successful,
+     *         StringAllocError::ALLOC_ERR if the allocation failed
+     *         StringAllocError::IGNORED if the requested size is not smaller than the current size.
      */
     StringAllocError Shrink(std::size_t size) {
-        if(size >= l) return StringAllocError::IGNORED;
+        if(size >= (1 << size_exp) || c == nullptr) return StringAllocError::IGNORED;
 
-        l = ScalingFunction(size != 0 ? size - 1 : 0);
+        size_exp = NextExponent(size != 0 ? size - 1 : 0);
 
-        if(actual_len / l >= 3) {
-            Realloc(l);
+        if(actual_size_exp - size_exp >= 2) {
+#ifndef STRAZZLE_NO_ERROR_CHECKING
+            if(ReallocToExp(size_exp) == StringAllocError::ALLOC_ERR) return StringAllocError::ALLOC_ERR;
+#else
+            ReallocToExp(size_exp);
+#endif
         }
 
         return StringAllocError::OK;
@@ -443,23 +432,39 @@ template<typename CharT, std::size_t TSize> class StringAllocator {
 
     /**
      * @brief Reallocates the memory for the string to the specified size.
-     *        Uses new to allocate a new block of memory, copies the existing content, and releases the old memory.
+     *        Uses ReallocToExp to allocate memory based on the next power of two exponent.
      *
      * @param size The new size to allocate the memory to.
-     * @return StringAllocError::OK if the operation is successful, StringAllocError::ALLOC_ERR if memory allocation fails.
+     * @return StringAllocError::OK if the operation is successful,
+     *         StringAllocError::ALLOC_ERR if memory allocation fails.
      */
     StringAllocError Realloc(std::size_t size) {
-        size = ScalingFunction(size);
+#ifndef STRAZZLE_NO_ERROR_CHECKING
+        if(ReallocToExp(NextExponent(size)) == StringAllocError::ALLOC_ERR) return StringAllocError::ALLOC_ERR;
+#else
+        ReallocToExp(NextExponent(size));
+#endif
+
+        return StringAllocError::OK;
+    }
+
+    /**
+     * @brief Reallocates the memory for the string to the specified exponent.
+     *        Uses new to allocate a new block of memory, copies the existing content, and releases the old memory.
+     *
+     * @param exponent The exponent to determine the new size of the allocated memory.
+     * @return StringAllocError::OK if the operation is successful,
+     *         StringAllocError::ALLOC_ERR if memory allocation fails.
+     */
+    StringAllocError ReallocToExp(uint8_t exponent) {
+        uint64_t size = 1 << exponent;
 
         CharT* nc = new CharT[size];
-
-        if(nc == nullptr) {
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-            return StringAllocError::ALLOC_ERR;
+        if(nc == nullptr) return StringAllocError::ALLOC_ERR;
 #else
-            throw std::bad_alloc();
+        throw std::bad_alloc();
 #endif
-        }
 
         if(c != nullptr) {
             memcpy(nc, c, TSize * size);
@@ -467,16 +472,47 @@ template<typename CharT, std::size_t TSize> class StringAllocator {
         }
 
         c = nc;
-        l = size;
-        actual_len = l;
+
+        size_exp = exponent;
+        actual_size_exp = exponent;
+
         return StringAllocError::OK;
     }
 
+    /**
+     * @brief Frees the allocated memory and resets the size.
+     */
+    void Free() {
+        delete[] c;
+        size_exp = 0;
+        actual_size_exp = 0;
+    }
+
     CharT* c = nullptr;
-    uint64_t l = 0;
+    uint8_t size_exp = 0;
 
   private:
-    uint64_t actual_len = 0;
+    uint8_t actual_size_exp = 0;
+
+    /**
+     * @brief Counts leading zeros in an unsigned 64-bit integer.
+     *
+     * @param x The input unsigned 64-bit integer.
+     * @return The number of leading zeros in the binary representation of x.
+     */
+    static inline std::size_t clz(std::size_t x) {
+        return x ? __builtin_clzl(x) : 64;
+    }
+
+    /**
+     * @brief Calculates the next power of two exponent based on the provided size.
+     *
+     * @param x The size used to calculate the next power of two exponent.
+     * @return The calculated exponent.
+     */
+    static inline uint8_t NextExponent(std::size_t x) {
+        return 64 - clz(x);
+    }
 };
 
 } // namespace Strazzle
