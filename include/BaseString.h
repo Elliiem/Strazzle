@@ -58,11 +58,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
         size = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERR_CHECKING
-        if(alloc.DynamicResize(size + 1) == StringAllocError::ALLOC_ERR) {
+        if(alloc.Resize(size + 1) == StringAllocError::ALLOC_ERR) {
             throw std::bad_alloc();
         }
 #else
-        alloc.DynamicResize(size + 1);
+        alloc.Resize(size + 1);
 #endif
 
         memcpy(alloc.c, str, TSize * size);
@@ -106,17 +106,20 @@ template<typename CharT, std::size_t TSize> class BaseString {
         uint64_t append_size = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.DynamicResize(l + append_size + 1) == StringAllocError::ALLOC_ERR) {
+        if(alloc.Resize(l + append_size + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.DynamicResize(append_size + l + 1);
+        alloc.Resize(append_size + l + 1);
 #endif
 
         memcpy(alloc.c + l, str, TSize * append_size);
 
         l = l + append_size;
+
         alloc.c[l] = 0;
+
+        return BaseStringError::OK;
     }
 
     /**
@@ -128,17 +131,21 @@ template<typename CharT, std::size_t TSize> class BaseString {
      * @return BaseStringError::OK if the operation is successful, BaseStringError::ALLOC_ERR if memory allocation fails.
      */
     BaseStringError Insert(std::size_t i, const CharT* str, std::size_t size = SIZE_MAX) {
+        if(i == l) {
+            return Append(str, size);
+        }
+
         CheckBounds(i, "BaseString::Insert\n");
 
         uint64_t str_len = strlen(str);
         uint64_t insert_len = size < str_len ? size : str_len;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.DynamicResize(l + insert_len + 1) == StringAllocError::ALLOC_ERR) {
+        if(alloc.Resize(l + insert_len + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.DynamicResize(l + insert_len + 1);
+        alloc.Resize(l + insert_len + 1);
 #endif
 
         memmove(alloc.c + i + str_len, alloc.c + i, TSize * (l - i));
@@ -168,12 +175,14 @@ template<typename CharT, std::size_t TSize> class BaseString {
         alloc.c[l] = 0;
 
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.DynamicResize(l + 1) == StringAllocError::ALLOC_ERR) {
+        if(alloc.Resize(l + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.DynamicResize(l + 1);
+        alloc.Resize(l + 1);
 #endif
+
+        return BaseStringError::OK;
     }
 
     /**
@@ -186,11 +195,11 @@ template<typename CharT, std::size_t TSize> class BaseString {
      */
     BaseStringError Resize(std::size_t size, const CharT* fill = " ") {
 #ifndef STRAZZLE_NO_ERROR_CHECKING
-        if(alloc.DynamicResize(size + 1) == StringAllocError::ALLOC_ERR) {
+        if(alloc.Resize(size + 1) == StringAllocError::ALLOC_ERR) {
             return BaseStringError::ALLOC_ERR;
         }
 #else
-        alloc.DynamicResize(size + 1);
+        alloc.Resize(size + 1);
 #endif
         if(size > l) {
             if(fill == "") fill = " ";
@@ -199,7 +208,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
 
             for(uint64_t i = l; i < size;) {
                 if(i + sl > size) {
-                    Append(fill, (i + sl) - size - 1);
+                    Append(fill, (i + sl) - size);
                     break;
                 }
 
@@ -210,6 +219,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
 
         l = size;
         alloc.c[l] = 0;
+
         return BaseStringError::OK;
     }
 
@@ -229,7 +239,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
      * @brief Creates a BaseStringReference for a portion of the string.
      *
      * @param i The starting index of the reference.
-     * @param len The length of the reference.
+     * @param Len The length of the reference.
      * @return A BaseStringReference object representing the specified portion of the string.
      */
     BaseStringReference<CharT> Ref(std::size_t i, std::size_t size = SIZE_MAX) {
@@ -244,7 +254,7 @@ template<typename CharT, std::size_t TSize> class BaseString {
      * @brief Creates a substring of the current string.
      *
      * @param i The starting index of the substring.
-     * @param len The length of the substring.
+     * @param Len The length of the substring.
      * @return A new BaseString object representing the specified substring.
      */
     BaseString Substr(std::size_t i, std::size_t size = SIZE_MAX) {
@@ -260,13 +270,13 @@ template<typename CharT, std::size_t TSize> class BaseString {
      *
      * @return The length of the string.
      */
-    uint64_t len() {
+    uint64_t Len() {
         return l;
     }
 
   private:
     StringAllocator<CharT> alloc;
-    uint64_t l;
+    uint64_t l = 0;
 
     /**
      * @brief Checks if the index is within bounds and throws an exception if not.
@@ -316,7 +326,7 @@ template<typename CharT, std::size_t TSize> struct BaseStringReference {
      *
      * @return The length of the reference.
      */
-    uint64_t len() {
+    uint64_t Len() {
         return l;
     }
 
@@ -392,8 +402,12 @@ template<typename CharT, std::size_t TSize> class StringAllocator {
      *         StringAllocError::ALLOC_ERR if memory allocation fails.
      *         StringAllocError::IGNORED if the requested size already was the current size
      */
-    StringAllocError DynamicResize(std::size_t size) {
+    StringAllocError Resize(std::size_t size) {
         uint64_t current_size = (1 << size_exp);
+
+        if(c == nullptr) {
+            Realloc(size);
+        }
 
         if(size < current_size) {
             return Shrink(size);
