@@ -1,5 +1,6 @@
 
 #define STRAZZLE_DEBUG_ALL_PUBLIC
+#define NDEBUG
 
 #include "BaseString.h"
 
@@ -9,8 +10,9 @@
 int main() {
     Strazzle::BaseString foo;
 
-    foo.Append("foobar\n");
-    foo._data;
+    foo.Insert("AAAAAAAAAAAAAAAAAA\n", 0);
+
+    printf("allocated: | %u => %u |\n", foo._allocated_exp, Strazzle::_ExpToNum(foo._allocated_exp));
 
     printf("%s", foo.Cstr());
 }

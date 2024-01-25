@@ -5,6 +5,14 @@
 #include <stdexcept>
 
 namespace Strazzle {
+/**
+ * @brief Converts from exp to size
+ * @param exp The Exponent
+ * @return The size
+ */
+inline std::size_t _ExpToNum(uint8_t exp) {
+    return exp != 0 ? 1UL << exp : 0;
+}
 
 /**
  * @brief Utility function to count leading zeros in a size_t value.
@@ -22,41 +30,57 @@ inline std::size_t _clz(std::size_t x) {
  */
 inline uint8_t _GetExponent(std::size_t x) {
     std::size_t clz_x = Strazzle::_clz(x);
-    return ((clz_x != Strazzle::_clz(x - 1)) && (clz_x != 0)) ? (63 - clz_x) : (64 - clz_x);
-}
 
-inline std::size_t _ExpToNum(uint8_t exp) {
-    return 1UL << exp;
+    return ((clz_x != Strazzle::_clz(x - 1)) && (x != 0)) ? (63 - clz_x) : (64 - clz_x);
 }
 
 const std::size_t SSO_SIZE = 16;
 
 /**
- * @brief String class with Small String Optimization (SSO) and dynamic memory allocation support.
+ * @brief String class with Small String Optimization (SSO)
  */
 struct BaseString {
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   public:
+#endif
+    /**
+     * @brief Reference to a BaseString ie a pointer to the base that acts as a substr
+     */
     struct Reference {
         friend BaseString;
 
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
       private:
-        Reference(char* base_c, std::size_t i, std::size_t len, std::size_t base_len) : _base_c(base_c), _i(i), _len(len), _base_len(base_len) {
+#endif
+        Reference(char* base_c, std::size_t i, std::size_t len, std::size_t base_len) : _i(i), _len(len) {
         }
 
-        char* _base_c;
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
+      private:
+#endif
+        // Start of substr in base
         std::size_t _i;
-
-        std::size_t _base_len;
+        // Len of substr
         std::size_t _len;
 
+        // The base
+        const BaseString* _base;
+
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
       private:
+#endif
+        /**
+         * @brief Checks if the reference is still within bounds of the base
+         */
         void CheckBounds() {
-            if(_i + _len > _base_len)
+            if(_i + _len > _base->_len)
                 throw std::out_of_range("Reference is not within bounds of base! << Strazzle::BaseString::Reference::CheckBounds()");
         }
     };
 
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   public:
+#endif
     BaseString() : _data(_sso_buffer) {
     }
 
@@ -72,7 +96,7 @@ struct BaseString {
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   private:
 #endif
-    enum class Mode : uint8_t { SMALL_STRING = 0, LARGE_STRING = 1 };
+    enum class Mode : uint8_t { NONE = 0, SMALL_STRING = 1, LARGE_STRING = 2 };
 
     // Small String Optimization buffer
     char _sso_buffer[Strazzle::SSO_SIZE];
@@ -82,14 +106,21 @@ struct BaseString {
     // Length of the string
     std::size_t _len = 0;
 
-    // Current mode of the string (Small or Large)
-    Mode _mode = Strazzle::BaseString::Mode::SMALL_STRING;
+    // Current mode of the string (should NEVER be NONE)
+    Strazzle::BaseString::Mode _mode = Strazzle::BaseString::Mode::SMALL_STRING;
+
+    // Exponent that is reserved to
+    // allocated memory will ALWAYS be more or equal to this value
+    uint8_t _reserved_exp = 0;
+
 #ifdef NDEBUG
-    // Size of allocated memory (used when NDEBUG is defined)
-    std::size_t allocated_size = Strazzle::SSO_SIZE;
+    // Size of allocated memory
+    uint8_t _allocated_exp = 0;
 #endif
 
+#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   public:
+#endif
     /**
      * @brief Append a string to the end of the current string.
      * @param str The string to append.
@@ -97,7 +128,8 @@ struct BaseString {
      */
     void Append(const char* str, std::size_t size = SIZE_MAX) {
         size = std::min(strlen(str), size);
-        Strazzle::BaseString::Reserve(size + _len);
+
+        Strazzle::BaseString::ResizeAllocation(size + _len + 1);
 
         std::memcpy(_data + _len, str, size);
 
@@ -116,9 +148,11 @@ struct BaseString {
         if(i > _len) throw std::out_of_range("Index is out of bounds!\n << Strazzle::BaseString::Insert()");
 
         size = std::min(strlen(str), size);
-        Strazzle::BaseString::Reserve(size + _len);
 
-        std::memmove(_data + i + size, _data + i, size);
+        Strazzle::BaseString::ResizeAllocation(size + _len + 1);
+
+        std::memmove(_data + i + size, _data + i, _len - i);
+
         std::memcpy(_data + i, str, size);
 
         _len = size + _len;
@@ -138,7 +172,7 @@ struct BaseString {
 
         std::memmove(_data + i, _data + i + size, _len - i);
 
-        Strazzle::BaseString::Reserve(_len - size);
+        Strazzle::BaseString::ResizeAllocation(_len - size);
         _len = _len - size;
 
         _data[_len] = '\0';
@@ -150,7 +184,7 @@ struct BaseString {
      * @param fill The string to fill with (default is a space).
      */
     void Resize(std::size_t size, const char* fill = " ") {
-        Strazzle::BaseString::Reserve(size);
+        Strazzle::BaseString::ResizeAllocation(size + 1);
 
         if(size > _len) {
             std::size_t str_len = strlen(fill);
@@ -172,7 +206,7 @@ struct BaseString {
      * @param fill The character to fill with (default is a space).
      */
     void Resize(std::size_t size, char fill = ' ') {
-        Strazzle::BaseString::Reserve(size);
+        Strazzle::BaseString::ResizeAllocation(size + 1);
 
         if(size > _len) {
             std::memset(_data + _len, fill, size - _len);
@@ -200,17 +234,10 @@ struct BaseString {
     }
 
     /**
-     * @brief Allocates the specified ammount of memory
-     * @param size The requested ammount of memory
+     * @brief Returns a substr
+     * @param i The starting index
+     * @param size The lenght of the substr
      */
-    void ResizeAllocation(std::size_t size) {
-        if(Strazzle::BaseString::ChangeMode(size)) return;
-
-        if(_mode == Strazzle::BaseString::Mode::LARGE_STRING) {
-            Strazzle::BaseString::Realloc(Strazzle::_GetExponent(size));
-        }
-    }
-
     Strazzle::BaseString Substr(std::size_t i, std::size_t size = SIZE_MAX) {
         if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::BaseString::Substr()\n");
 
@@ -219,6 +246,11 @@ struct BaseString {
         return Strazzle::BaseString(_data + i, size);
     }
 
+    /**
+     * @brief Returns a reference substr
+     * @param i The starting index
+     * @param size The lenght of the substr
+     */
     Strazzle::BaseString::Reference RefSubstr(std::size_t i, std::size_t size = SIZE_MAX) {
         if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::BaseString::RefSubstr()\n");
 
@@ -227,25 +259,44 @@ struct BaseString {
         return Strazzle::BaseString::Reference(_data, i, size, _len);
     }
 
+    /**
+     * @brief Reserves to the given size. Reserving means that there will never be less allocated than reserved
+     * @param size The size to reserve to
+     */
+    void Reserve(std::size_t size) {
+        _reserved_exp = Strazzle::_GetExponent(size);
+
+        uint8_t cur_exp = Strazzle::_GetExponent(_len);
+
+        if(cur_exp < _reserved_exp) {
+            Strazzle::BaseString::ResizeAllocation(size);
+        }
+    }
+
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   private:
 #endif
-    /**
-     * @brief Enlarges the allocation use ResizeAllocation() to also shrink the allocation
-     * @param new_len The new length of the string.
-     */
-    void Reserve(std::size_t new_len) {
-        new_len++;
 
-        if(Strazzle::BaseString::ChangeMode(new_len)) return;
+    /**
+     * @brief Resize the current allocation, handles changing mode
+     * @param size The size to alloc to (will allo to the next exp)
+     */
+    void ResizeAllocation(std::size_t size) {
+        std::size_t new_exp = Strazzle::_GetExponent(size);
+
+        if(new_exp < _reserved_exp) {
+            return;
+        }
+
+        Strazzle::BaseString::Mode new_mode = GetNewMode(size);
+
+        if(new_mode != Strazzle::BaseString::Mode::NONE) {
+            ChangeMode(new_mode, new_exp);
+            return;
+        }
 
         if(_mode == Strazzle::BaseString::Mode::LARGE_STRING) {
-            uint8_t cur_exp = Strazzle::_GetExponent(_len);
-            uint8_t new_exp = Strazzle::_GetExponent(new_len);
-
-            if(new_exp > cur_exp) {
-                Strazzle::BaseString::Realloc(new_exp);
-            }
+            Strazzle::BaseString::Realloc(new_exp);
         }
     }
 
@@ -255,10 +306,10 @@ struct BaseString {
      */
     void Realloc(uint8_t exp) {
 #ifdef NDEBUG
-        allocated_size = 1 << exp;
+        _allocated_exp = exp;
 #endif
 
-        std::size_t byte_c = 1 << exp;
+        std::size_t byte_c = Strazzle::_ExpToNum(exp);
 
         char* p = static_cast<char*>(malloc(byte_c));
 
@@ -270,32 +321,50 @@ struct BaseString {
     }
 
     /**
-     * @brief Changes the mode based on the given size and handles moving the current contents to the new buffer
-     * @param size The size that will be allocated to in the calling function
-     * @return Whether or not the mode was changed
+     * @brief Returns the mode that needs to be changed to when allocating to the given size
+     * @param size The size we want to allocate to in the calling function
+     * @return Returns a Strazzle::BaseString::Mode this indicates the mode we need to change to
+     *         if we dont need to change the mode Strazzle::BaseString::Mode::NONE is returned
      */
-    bool ChangeMode(std::size_t size) {
+    inline Strazzle::BaseString::Mode GetNewMode(std::size_t size) {
         if(_len >= Strazzle::SSO_SIZE && size < Strazzle::SSO_SIZE) {
-            Strazzle::BaseString::ToSmall();
-
-#ifdef NDEBUG
-            allocated_size = Strazzle::SSO_SIZE;
-#endif
-            return true;
-        } else if(_len < Strazzle::SSO_SIZE && size > Strazzle::SSO_SIZE) {
-            Strazzle::BaseString::ToLarge(Strazzle::_GetExponent(size));
-
-#ifdef NDEBUG
-            allocated_size = 1 << new_exp;
-#endif
-
-            return true;
+            return Strazzle::BaseString::Mode::SMALL_STRING;
         }
 
-        return false;
+        if(_len < Strazzle::SSO_SIZE && size > Strazzle::SSO_SIZE) {
+            return Strazzle::BaseString::Mode::LARGE_STRING;
+        }
+
+        return Strazzle::BaseString::Mode::NONE;
     }
 
+    /**
+     * @brief Changes the current mode to the given mode
+     * @param mode The mode that will be changed to if this is Strazzle::BaseString::Mode::NONE nothing will be done
+     * @param size The size that will be allocated to when changing to a large string
+     */
+    inline void ChangeMode(Strazzle::BaseString::Mode mode, uint8_t exp) {
+        switch(mode) {
+            case Strazzle::BaseString::Mode::LARGE_STRING:
+                Strazzle::BaseString::ToLarge(exp);
+                break;
+            case Strazzle::BaseString::Mode::SMALL_STRING:
+                Strazzle::BaseString::ToSmall();
+                break;
+            default:
+                break;
+        }
+    }
+
+    /**
+     * @brief Changes the mode to LARGE_STRING and hadles moving to the new buffer
+     * @param exp the exponent of the size the heap allocation will be
+     */
     inline void ToLarge(uint8_t exp) {
+#ifdef NDEBUG
+        _allocated_exp = exp;
+#endif
+
         char* p = static_cast<char*>(malloc(Strazzle::_ExpToNum(exp)));
 
         memcpy(p, _data, _len);
@@ -305,7 +374,14 @@ struct BaseString {
         _mode = Strazzle::BaseString::Mode::LARGE_STRING;
     }
 
+    /**
+     * @brief Changes the mode to SMALL_STRING and hadles moving to the new buffer
+     */
     inline void ToSmall() {
+#ifdef NDEBUG
+        _allocated_exp = 0;
+#endif
+
         _len = std::min(Strazzle::SSO_SIZE, _len);
 
         memcpy(_sso_buffer, _data, _len);
@@ -317,13 +393,3 @@ struct BaseString {
 };
 
 } // namespace Strazzle
-
-/*
-
-    uint8_t _r -> (0) => !r -> (> 0) => r
-
-    _al = 8 -> 32
-    => ToLarge();
-    => _al = 32
-
-*/
