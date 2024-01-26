@@ -1,4 +1,3 @@
-
 #define STRAZZLE_DEBUG_ALL_PUBLIC
 #define NDEBUG
 
