@@ -2,17 +2,19 @@
 #define STRAZZLE_DEBUG_ALL_PUBLIC
 #define NDEBUG
 
-#include "BaseString.h"
+#include "Strazzle/String.h"
 
 #include <iostream>
 #include <string>
 
 int main() {
-    Strazzle::BaseString foo;
+    Strazzle::String foo("ABCDEFG");
 
-    foo.Insert("AAAAAAAAAAAAAAAAAA\n", 0);
+    Strazzle::String::Reference foo_ref = foo.RefSubstr(0);
 
-    printf("allocated: | %u => %u |\n", foo._allocated_exp, Strazzle::_ExpToNum(foo._allocated_exp));
+    Strazzle::String bar("00001111\n");
 
-    printf("%s", foo.Cstr());
+    bar.Insert(foo_ref, 4);
+
+    printf(bar.Cstr());
 }

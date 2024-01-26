@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -38,21 +40,20 @@ const std::size_t SSO_SIZE = 16;
 
 /**
  * @brief String class with Small String Optimization (SSO)
+ *        Intended for use with "small" strings, "large" strings will be handled in a different class
  */
-struct BaseString {
-#ifndef STRAZZLE_DEBUG_ALL_PUBLIC
+class String {
   public:
-#endif
     /**
-     * @brief Reference to a BaseString ie a pointer to the base that acts as a substr
+     * @brief Reference to a String ie a pointer to the base that acts as a substr
      */
     struct Reference {
-        friend BaseString;
+        friend String;
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
       private:
 #endif
-        Reference(char* base_c, std::size_t i, std::size_t len, std::size_t base_len) : _i(i), _len(len) {
+        Reference(Strazzle::String& base, std::size_t i, std::size_t len) : _base(base), _i(i), _len(len) {
         }
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
@@ -64,7 +65,7 @@ struct BaseString {
         std::size_t _len;
 
         // The base
-        const BaseString* _base;
+        const Strazzle::String& _base;
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
       private:
@@ -72,25 +73,31 @@ struct BaseString {
         /**
          * @brief Checks if the reference is still within bounds of the base
          */
-        void CheckBounds() {
-            if(_i + _len > _base->_len)
-                throw std::out_of_range("Reference is not within bounds of base! << Strazzle::BaseString::Reference::CheckBounds()");
+        void CheckBounds() const {
+            if(_i + _len > _base._len)
+                throw std::out_of_range("Reference is not within bounds of base! << Strazzle::String::Reference::CheckBounds()");
         }
     };
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
   public:
 #endif
-    BaseString() : _data(_sso_buffer) {
+    String() : _data(_sso_buffer) {
+        _data[0] = 0;
     }
 
-    BaseString(const char* str, std::size_t size = SIZE_MAX) {
-        _data = _sso_buffer;
-
-        Strazzle::BaseString::Append(str, size);
+    String(const char* str, std::size_t size = SIZE_MAX) : _data(_sso_buffer) {
+        Strazzle::String::Append(str, size);
     }
 
-    BaseString(Strazzle::BaseString::Reference& ref, std::size_t size = SIZE_MAX) {
+    String(const Strazzle::String& str, std::size_t size = SIZE_MAX) : _data(_sso_buffer) {
+        size = std::min(str._len, size);
+
+        Append(str._data, size);
+    }
+
+    String(const Strazzle::String::Reference& ref, std::size_t size = SIZE_MAX) : _data(_sso_buffer) {
+        Append(ref, size);
     }
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
@@ -107,7 +114,7 @@ struct BaseString {
     std::size_t _len = 0;
 
     // Current mode of the string (should NEVER be NONE)
-    Strazzle::BaseString::Mode _mode = Strazzle::BaseString::Mode::SMALL_STRING;
+    Strazzle::String::Mode _mode = Strazzle::String::Mode::SMALL_STRING;
 
     // Exponent that is reserved to
     // allocated memory will ALWAYS be more or equal to this value
@@ -129,7 +136,7 @@ struct BaseString {
     void Append(const char* str, std::size_t size = SIZE_MAX) {
         size = std::min(strlen(str), size);
 
-        Strazzle::BaseString::ResizeAllocation(size + _len + 1);
+        Strazzle::String::ResizeAllocation(size + _len + 1);
 
         std::memcpy(_data + _len, str, size);
 
@@ -139,17 +146,41 @@ struct BaseString {
     }
 
     /**
+     * @brief String version of Append
+     * @param str The string to append.
+     * @param size Maximum size to append (default is SIZE_MAX).
+     */
+    void Append(const Strazzle::String& str, std::size_t size = SIZE_MAX) {
+        size = std::min(str._len, size);
+
+        Strazzle::String::Append(str._data, size);
+    }
+
+    /**
+     * @brief Reference version of Append
+     * @param str The reference to append.
+     * @param size Maximum size to append (default is SIZE_MAX).
+     */
+    void Append(const Strazzle::String::Reference& ref, std::size_t size = SIZE_MAX) {
+        ref.CheckBounds();
+
+        size = std::min(ref._len, size);
+
+        Strazzle::String::Append(ref._base._data + ref._i, size);
+    }
+
+    /**
      * @brief Insert a string at a specified position in the current string.
      * @param str The string to insert.
      * @param i The position to insert at.
      * @param size Maximum size to insert (default is SIZE_MAX).
      */
     void Insert(const char* str, std::size_t i, std::size_t size = SIZE_MAX) {
-        if(i > _len) throw std::out_of_range("Index is out of bounds!\n << Strazzle::BaseString::Insert()");
+        if(i > _len) throw std::out_of_range("Index is out of bounds!\n << Strazzle::String::Insert()");
 
         size = std::min(strlen(str), size);
 
-        Strazzle::BaseString::ResizeAllocation(size + _len + 1);
+        Strazzle::String::ResizeAllocation(size + _len + 1);
 
         std::memmove(_data + i + size, _data + i, _len - i);
 
@@ -161,19 +192,63 @@ struct BaseString {
     }
 
     /**
+     * @brief String version of Insert
+     * @param str The string to insert.
+     * @param i The position to insert at.
+     * @param size Maximum size to insert (default is SIZE_MAX).
+     */
+    void Insert(const Strazzle::String& str, std::size_t i, std::size_t size = SIZE_MAX) {
+        size = std::min(str._len, size);
+
+        Strazzle::String::Insert(str._data, i, size);
+    }
+
+    /**
+     * @brief Reference version of Insert
+     * @param ref The reference to insert.
+     * @param i The position to insert at.
+     * @param size Maximum size to insert (default is SIZE_MAX).
+     */
+    void Insert(const Strazzle::String::Reference& ref, std::size_t i, std::size_t size = SIZE_MAX) {
+        ref.CheckBounds();
+
+        size = std::min(ref._len, size);
+
+        Strazzle::String::Insert(ref._base._data + ref._i, i, size);
+    }
+
+    /**
      * @brief Erase a portion of the string starting from a specified position.
      * @param i The starting position for erasing.
      * @param size Maximum size to erase (default is SIZE_MAX).
      */
     void Erase(std::size_t i, std::size_t size = SIZE_MAX) {
-        if(i >= _len) throw std::out_of_range("Index is out of bounds!\n << Strazzle::BaseString::Erase()");
+        if(i >= _len) throw std::out_of_range("Index is out of bounds!\n << Strazzle::String::Erase()");
 
         size = std::min(_len - i, size);
 
         std::memmove(_data + i, _data + i + size, _len - i);
 
-        Strazzle::BaseString::ResizeAllocation(_len - size);
+        Strazzle::String::ResizeAllocation(_len - size);
+
         _len = _len - size;
+
+        _data[_len] = '\0';
+    }
+
+    /**
+     * @brief Resize the string to a specified size, filling with a character.
+     * @param size The new size of the string.
+     * @param fill The character to fill with (default is a space).
+     */
+    void Resize(std::size_t size, char fill = ' ') {
+        Strazzle::String::ResizeAllocation(size + 1);
+
+        if(size > _len) {
+            std::memset(_data + _len, fill, size - _len);
+        }
+
+        _len = size;
 
         _data[_len] = '\0';
     }
@@ -183,8 +258,8 @@ struct BaseString {
      * @param size The new size of the string.
      * @param fill The string to fill with (default is a space).
      */
-    void Resize(std::size_t size, const char* fill = " ") {
-        Strazzle::BaseString::ResizeAllocation(size + 1);
+    void Resize(std::size_t size, const char* fill) {
+        Strazzle::String::ResizeAllocation(size + 1);
 
         if(size > _len) {
             std::size_t str_len = strlen(fill);
@@ -196,23 +271,6 @@ struct BaseString {
         } else {
             _len = size;
         }
-
-        _data[_len] = '\0';
-    }
-
-    /**
-     * @brief Resize the string to a specified size, filling with a character.
-     * @param size The new size of the string.
-     * @param fill The character to fill with (default is a space).
-     */
-    void Resize(std::size_t size, char fill = ' ') {
-        Strazzle::BaseString::ResizeAllocation(size + 1);
-
-        if(size > _len) {
-            std::memset(_data + _len, fill, size - _len);
-        }
-
-        _len = size;
 
         _data[_len] = '\0';
     }
@@ -238,12 +296,12 @@ struct BaseString {
      * @param i The starting index
      * @param size The lenght of the substr
      */
-    Strazzle::BaseString Substr(std::size_t i, std::size_t size = SIZE_MAX) {
-        if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::BaseString::Substr()\n");
+    Strazzle::String Substr(std::size_t i, std::size_t size = SIZE_MAX) {
+        if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::String::Substr()\n");
 
         size = std::min(_len - i, size);
 
-        return Strazzle::BaseString(_data + i, size);
+        return Strazzle::String(_data + i, size);
     }
 
     /**
@@ -251,12 +309,12 @@ struct BaseString {
      * @param i The starting index
      * @param size The lenght of the substr
      */
-    Strazzle::BaseString::Reference RefSubstr(std::size_t i, std::size_t size = SIZE_MAX) {
-        if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::BaseString::RefSubstr()\n");
+    Strazzle::String::Reference RefSubstr(std::size_t i, std::size_t size = SIZE_MAX) {
+        if(i >= _len) throw std::out_of_range("Index is out of bounds! << Strazzle::String::RefSubstr()\n");
 
         size = std::min(_len - i, size);
 
-        return Strazzle::BaseString::Reference(_data, i, size, _len);
+        return Strazzle::String::Reference(*this, i, size);
     }
 
     /**
@@ -269,8 +327,12 @@ struct BaseString {
         uint8_t cur_exp = Strazzle::_GetExponent(_len);
 
         if(cur_exp < _reserved_exp) {
-            Strazzle::BaseString::ResizeAllocation(size);
+            Strazzle::String::ResizeAllocation(size);
         }
+    }
+
+    bool operator==(Strazzle::String& other) {
+        return std::strcmp(other._data, _data) == 0;
     }
 
 #ifndef STRAZZLE_DEBUG_ALL_PUBLIC
@@ -288,15 +350,15 @@ struct BaseString {
             return;
         }
 
-        Strazzle::BaseString::Mode new_mode = GetNewMode(size);
+        Strazzle::String::Mode new_mode = GetNewMode(size);
 
-        if(new_mode != Strazzle::BaseString::Mode::NONE) {
+        if(new_mode != Strazzle::String::Mode::NONE) {
             ChangeMode(new_mode, new_exp);
             return;
         }
 
-        if(_mode == Strazzle::BaseString::Mode::LARGE_STRING) {
-            Strazzle::BaseString::Realloc(new_exp);
+        if(_mode == Strazzle::String::Mode::LARGE_STRING) {
+            Strazzle::String::Realloc(new_exp);
         }
     }
 
@@ -323,33 +385,33 @@ struct BaseString {
     /**
      * @brief Returns the mode that needs to be changed to when allocating to the given size
      * @param size The size we want to allocate to in the calling function
-     * @return Returns a Strazzle::BaseString::Mode this indicates the mode we need to change to
-     *         if we dont need to change the mode Strazzle::BaseString::Mode::NONE is returned
+     * @return Returns a Strazzle::String::Mode this indicates the mode we need to change to
+     *         if we dont need to change the mode Strazzle::String::Mode::NONE is returned
      */
-    inline Strazzle::BaseString::Mode GetNewMode(std::size_t size) {
+    inline Strazzle::String::Mode GetNewMode(std::size_t size) {
         if(_len >= Strazzle::SSO_SIZE && size < Strazzle::SSO_SIZE) {
-            return Strazzle::BaseString::Mode::SMALL_STRING;
+            return Strazzle::String::Mode::SMALL_STRING;
         }
 
         if(_len < Strazzle::SSO_SIZE && size > Strazzle::SSO_SIZE) {
-            return Strazzle::BaseString::Mode::LARGE_STRING;
+            return Strazzle::String::Mode::LARGE_STRING;
         }
 
-        return Strazzle::BaseString::Mode::NONE;
+        return Strazzle::String::Mode::NONE;
     }
 
     /**
      * @brief Changes the current mode to the given mode
-     * @param mode The mode that will be changed to if this is Strazzle::BaseString::Mode::NONE nothing will be done
+     * @param mode The mode that will be changed to if this is Strazzle::String::Mode::NONE nothing will be done
      * @param size The size that will be allocated to when changing to a large string
      */
-    inline void ChangeMode(Strazzle::BaseString::Mode mode, uint8_t exp) {
+    inline void ChangeMode(Strazzle::String::Mode mode, uint8_t exp) {
         switch(mode) {
-            case Strazzle::BaseString::Mode::LARGE_STRING:
-                Strazzle::BaseString::ToLarge(exp);
+            case Strazzle::String::Mode::LARGE_STRING:
+                Strazzle::String::ToLarge(exp);
                 break;
-            case Strazzle::BaseString::Mode::SMALL_STRING:
-                Strazzle::BaseString::ToSmall();
+            case Strazzle::String::Mode::SMALL_STRING:
+                Strazzle::String::ToSmall();
                 break;
             default:
                 break;
@@ -371,7 +433,7 @@ struct BaseString {
 
         _data = p;
 
-        _mode = Strazzle::BaseString::Mode::LARGE_STRING;
+        _mode = Strazzle::String::Mode::LARGE_STRING;
     }
 
     /**
@@ -388,7 +450,7 @@ struct BaseString {
 
         free(_data);
 
-        _mode = Strazzle::BaseString::Mode::SMALL_STRING;
+        _mode = Strazzle::String::Mode::SMALL_STRING;
     }
 };
 
